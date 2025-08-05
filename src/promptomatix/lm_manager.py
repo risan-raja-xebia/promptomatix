@@ -76,6 +76,13 @@ class LMManager:
             "us.amazon.nova-pro-v1:0",
         ]
         if provider == 'bedrock':
+            try:
+                import boto3  # noqa: F401
+            except ImportError:
+                raise ImportError(
+                    "boto3 is required for Bedrock provider but is not installed. "
+                    "Please install it with 'pip install boto3[crt]'."
+                )
             if 'bedrock/' in model_name:
                 raise ValueError(f"Model name {model_name} is not a valid Bedrock model name. If model_name begins with 'bedrock/', please remove the 'bedrock/' prefix.")
             if model_name not in bedrock_model_names:
