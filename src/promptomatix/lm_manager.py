@@ -17,7 +17,7 @@ class LMManager:
     def get_lm(cls, 
                provider: str, 
                model_name: str, 
-               api_key: str, 
+               api_key: Optional[str] = None, 
                api_base: Optional[str] = None,
                temperature: float = 0.0,
                max_tokens: int = 4000,

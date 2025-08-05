@@ -11,6 +11,7 @@ import dspy
 from datasets import load_dataset, Dataset
 
 from ..utils.paths import CONFIG_LOGS_DIR
+from ..lm_manager import LMManager
 from .prompts import (
     generate_dspy_module_from_task_description_and_sample_data,
     extract_task_description_from_raw_input,
@@ -30,6 +31,7 @@ from .prompts import (
     improvise_raw_input_task
 )
 
+
 logger = logging.getLogger(__name__)
 
 class ModelProvider(Enum):
@@ -38,6 +40,7 @@ class ModelProvider(Enum):
     DATABRICKS = 'databricks'
     LOCAL = 'local'
     TOGETHERAI = 'togetherai'
+    BEDROCK = 'bedrock'
 
 DEFAULT_SYNTHETIC_DATA_SIZE = 30
 DEFAULT_TRAIN_RATIO = 0.2
@@ -911,6 +914,11 @@ class Config:
                 'api_base': 'https://api.together.xyz/',
                 'env_key': 'TOGETHERAI_API_KEY',
                 'default_model': 'together_ai/mistralai/Mistral-Small-24B-Instruct-2501'
+            },
+            ModelProvider.BEDROCK: {
+                'api_base': None,
+                'env_key': 'AWS_ACCESS_KEY_ID',
+                'default_model': "us.anthropic.claude-3-5-sonnet-20241022-v2:0"
             }
         }
 
@@ -940,6 +948,11 @@ class Config:
                 'api_base': 'https://api.together.xyz/',
                 'env_key': 'TOGETHERAI_API_KEY',
                 'default_model': 'together_ai/meta-llama/Llama-3.3-70B-Instruct-Turbo'
+            },
+            ModelProvider.BEDROCK: {
+                'api_base': None,
+                'env_key': None, # At the moment boto3 will read it from ~/.aws/credentials
+                'default_model': "us.anthropic.claude-3-7-sonnet-20250219-v1:0"
             }
         }
 
@@ -948,14 +961,20 @@ class Config:
             if self.model_provider is None:
                 self.model_provider = ModelProvider.OPENAI
                 # self.model_provider = ModelProvider.TOGETHERAI
-            self.model_name = PROVIDER_CONFIGS[ModelProvider.OPENAI]['default_model']
+            elif self.model_provider == ModelProvider.BEDROCK or self.model_provider == ModelProvider.BEDROCK.value:
+                self.model_name = PROVIDER_CONFIGS[ModelProvider.BEDROCK]['default_model']
+            else:
+                self.model_name = PROVIDER_CONFIGS[ModelProvider.OPENAI]['default_model']
             # self.model_name = PROVIDER_CONFIGS[ModelProvider.TOGETHERAI]['default_model']
 
         if not self.config_model_name:
             if self.config_model_provider is None:
                 self.config_model_provider = ModelProvider.OPENAI
                 # self.config_model_provider = ModelProvider.TOGETHERAI
-            self.config_model_name = PROVIDER_CONFIGS_FOR_CONFIG_MODEL[ModelProvider.OPENAI]['default_model']
+            elif self.config_model_provider == ModelProvider.BEDROCK or self.config_model_provider == ModelProvider.BEDROCK.value:
+                self.config_model_name = PROVIDER_CONFIGS_FOR_CONFIG_MODEL[ModelProvider.BEDROCK]['default_model']
+            else:
+                self.config_model_name = PROVIDER_CONFIGS_FOR_CONFIG_MODEL[ModelProvider.OPENAI]['default_model']
             # self.config_model_name = PROVIDER_CONFIGS_FOR_CONFIG_MODEL[ModelProvider.TOGETHERAI]['default_model']
         
         # Convert string to enum if needed
@@ -999,9 +1018,9 @@ class Config:
             raise ValueError(f"Unsupported model provider. Must be one of: {valid_providers}")
 
         # Set API base
-        if self.model_api_base is None:
+        if self.model_api_base is None and self.model_provider != ModelProvider.BEDROCK:
             self.model_api_base = provider_config['api_base']
-        if self.config_model_api_base is None:
+        if self.config_model_api_base is None and self.config_model_provider != ModelProvider.BEDROCK:
             self.config_model_api_base = config_provider_config['api_base']
 
         # Set API key if required
@@ -1033,14 +1052,21 @@ class Config:
 
         # Initialize language model
         try:
-            tmp_lm = dspy.LM(
-                self.config_model_name,
-                api_key=self.config_model_api_key,
-                api_base=self.config_model_api_base,
-                max_tokens=self.config_max_tokens,
-                temperature=self.config_temperature,
-                cache=True
-            )
+            if self.model_provider == ModelProvider.BEDROCK:
+                tmp_lm = dspy.LM(
+                    model=f"bedrock/{self.model_name}",
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                )
+            else:
+                tmp_lm = dspy.LM(
+                    self.config_model_name,
+                    api_key=self.config_model_api_key,
+                    api_base=self.config_model_api_base,
+                    max_tokens=self.config_max_tokens,
+                    temperature=self.config_temperature,
+                    cache=True
+                )
             logger.info(f"Successfully initialized {self.config_model_provider.value} model: {self.config_model_name}")
             
             # Log model configuration (excluding sensitive data)

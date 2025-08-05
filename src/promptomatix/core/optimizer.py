@@ -134,14 +134,8 @@ class PromptOptimizer:
             # Initialize LLM once for all batches
             with dspy.settings.context():
                 try:
-                    tmp_lm = dspy.LM(
-                        self.config.config_model_name,
-                        api_key=self.config.config_model_api_key,
-                        api_base=self.config.config_model_api_base,
-                        max_tokens=self.config.config_max_tokens,
-                        cache=False
-                    )
-                    
+                    tmp_lm = self._initialize_dspy_lm()
+                        
                     batch_num = 1
                     while remaining_samples > 0:
                         batch_size = min(max_samples_per_batch, remaining_samples)
@@ -571,15 +565,15 @@ class PromptOptimizer:
         """
         try:
             # Determine the provider from config
-            provider = getattr(self.config, 'config_model_provider', 'openai')
-            if hasattr(provider, 'value'):
-                provider = provider.value
+            provider = self._get_provider()
             
-            if provider.lower() == 'openai':
+            if provider == 'openai':
                 oai_ouput = self._call_openai_api(prompt, model)
                 return oai_ouput
-            elif provider.lower() == 'anthropic':
+            elif provider == 'anthropic':
                 return self._call_anthropic_api(prompt)
+            elif provider == 'bedrock':
+                return self._call_bedrock_api(prompt)
             else:
                 raise ValueError(f"Unsupported provider for direct API calls: {provider}")
                 
@@ -683,6 +677,36 @@ class PromptOptimizer:
         except Exception as e:
             self.logger.error(f"Error calling Anthropic API: {str(e)}")
             raise
+    
+    def _call_bedrock_api(self, prompt: str) -> str:
+        """
+        Call Bedrock API directly.
+        
+        Args:
+            prompt (str): The prompt to send
+        """
+        import litellm
+        try:
+            response = litellm.completion(
+                model=f"bedrock/{self.config.config_model_name}",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=self.config.config_temperature,
+                max_tokens=self.config.config_max_tokens,
+            )
+            
+            response_text = response['choices'][0]['message']['content']
+            input_tokens = len(prompt.split()) * 1.3  # Rough token estimation
+            output_tokens = len(response_text.split()) * 1.3
+            
+            # Estimate cost (this would need to be updated with actual pricing)
+            estimated_cost = (input_tokens * 0.000015) + (output_tokens * 0.000075)  # Rough estimate
+            self.llm_cost += estimated_cost
+
+            return self._clean_llm_response(response_text)
+
+        except Exception as e:
+            self.logger.error(f"Error calling the Bedrock API: {str(e)}")
+
 
     def _parse_input_fields(self) -> Union[str, List[str], Tuple[str, ...]]:
         """Parse input fields from config."""
@@ -800,6 +824,90 @@ class PromptOptimizer:
             error_msg = f"Error in data validation: {str(e)}"
             self.logger.error(error_msg)
             return False, error_msg
+
+    def _get_provider(self) -> str:
+        """
+        Get the standardized provider configuration.
+        
+        Returns:
+            str: The provider name (openai, anthropic, bedrock, etc.)
+        """
+        # Priority: config_model_provider > model_provider > default
+        provider = getattr(self.config, 'config_model_provider', None)
+        if provider is None:
+            provider = getattr(self.config, 'model_provider', 'openai')
+        
+        # Handle enum values
+        if hasattr(provider, 'value'):
+            provider = provider.value
+        
+        return provider.lower()
+
+    def _initialize_dspy_lm(self, model_name: str = None, api_key: str = None, 
+                           api_base: str = None, max_tokens: int = None, 
+                           temperature: float = None) -> dspy.LM:
+        """
+        Initialize DSPy LM with consistent provider handling.
+        
+        Args:
+            model_name: Model name to use (defaults to config)
+            api_key: API key to use (defaults to config)
+            api_base: API base URL to use (defaults to config)
+            max_tokens: Max tokens (defaults to config)
+            temperature: Temperature (defaults to config)
+            
+        Returns:
+            dspy.LM: Initialized DSPy LM instance
+        """
+        provider = self._get_provider()
+        
+        # Use config defaults if not provided
+        if model_name is None:
+            model_name = self.config.config_model_name
+        if api_key is None:
+            api_key = self.config.config_model_api_key
+        if api_base is None:
+            api_base = self.config.config_model_api_base
+        if max_tokens is None:
+            max_tokens = self.config.config_max_tokens
+        if temperature is None:
+            temperature = self.config.config_temperature
+        
+        if provider == "bedrock":
+            return dspy.LM(
+                model=f"bedrock/{model_name}",
+                max_tokens=max_tokens,
+                temperature=temperature,
+                cache=False
+            )
+        elif provider == "openai":
+            return dspy.LM(
+                model_name,
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                cache=False
+            )
+        elif provider == "anthropic":
+            return dspy.LM(
+                model_name,
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                cache=False
+            )
+        else:
+            # Fallback for other providers
+            return dspy.LM(
+                model_name,
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                cache=False
+            )
 
 def setup_optimizer_logger():
     """Set up dedicated logger for optimization steps and results."""
