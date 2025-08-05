@@ -86,7 +86,7 @@ class LMManager:
             if 'bedrock/' in model_name:
                 raise ValueError(f"Model name {model_name} is not a valid Bedrock model name. If model_name begins with 'bedrock/', please remove the 'bedrock/' prefix.")
             if model_name not in bedrock_model_names:
-                raise Warning(f"Model name {model_name} is not a valid Bedrock model name. Please use one of the following models. Please use cross inference model ID.")
+                raise Warning(f"Model name {model_name} may not be a valid Bedrock model name. Please use cross inference model ID to avoid bedrock errors.")
             return dspy.LM(
                 model=f"bedrock/{model_name}",
                 max_tokens=max_tokens,
